@@ -1,0 +1,134 @@
+#include <Enrf24.h>
+#include <nRF24L01.h>
+#include <string.h>
+#include <SPI.h>
+#include <stdio.h>
+//#include <driverlib.h> 
+#define P3_0 18
+#define P6_6 36
+#define P6_7 35
+
+
+Enrf24 radio(P3_0, P6_6, P6_7);  // P3.0=CE, P6.6=CSN, P6.7=IRQ
+const uint8_t txaddr[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0x01 };
+const uint8_t rxaddr[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0x01 };
+int TRIG_PIN = A14;
+int ECHO_PIN = A13;
+int values;
+float duration; 
+int distance;
+
+char c, message[33] = " ";
+bool tMode = false;
+bool printed;
+void dump_radio_status_to_serialport(uint8_t);
+
+void setup() {
+  
+  Serial.begin(9600);
+
+  SPI.begin();
+  SPI.setDataMode(SPI_MODE0);
+  SPI.setBitOrder(MSBFIRST);
+  pinMode(TRIG_PIN,OUTPUT);
+  pinMode(ECHO_PIN,INPUT);
+
+  radio.begin();  // Defaults 1Mbps, channel 0, max TX power
+  radio.setRXaddress((void*)rxaddr); // start in transmit mode
+  radio.enableRX();  // Start listening
+
+}
+
+void loop() {    
+  c = toupper(Serial.read());
+  
+  if (c == 'C') {
+      dump_radio_status_to_serialport(radio.radioState());
+  }
+
+  if ((c == 'T') && (tMode == false)) {
+    tMode = true;
+    radio.disableRX(); // stop listening
+    radio.setTXaddress((void*)txaddr);
+  }
+  else  
+  {
+    tMode = false;
+    radio.enableRX(); // start listening
+    radio.setRXaddress((void*)rxaddr);
+  }
+
+  if (tMode == false) {
+    char inbuf[33];
+    if ((radio.radioState() == ENRF24_STATE_PRX) && (printed == false)) {
+      dump_radio_status_to_serialport(radio.radioState());  // Should show Receive Mode
+      printed = true;
+    }
+    if (radio.read(inbuf)) {
+      Serial.println("New packet");
+
+        if((inbuf[0] == '4') && (inbuf[1] == '5') && (inbuf[2] == '6') && (inbuf[4] == 'P' ))
+        {
+          Serial.print("Decoded Packet: ");
+          for(int i = 5; i<33 ; i++){
+            message[i-5] = inbuf[i];
+          }
+          Serial.println(message);
+        }else{
+          Serial.println("Not applicable");
+      }
+      Serial.println(" ");
+    }
+  }
+
+  if (tMode == true) {
+    delay(500);
+    digitalWrite(TRIG_PIN, LOW);
+    delay(1);
+    digitalWrite(TRIG_PIN, HIGH);
+    delay(10);
+    digitalWrite(TRIG_PIN,LOW);
+    
+    duration = pulseIn(ECHO_PIN,HIGH);
+    distance = (duration/2)/29.1;
+    char str[9];
+    snprintf(str, 10, "456XP%4d", distance);
+    char *sendDist = str; 
+    Serial.print("Sending packet: ");
+    Serial.println(sendDist);
+    radio.print(sendDist);
+    radio.flush();  // Force transmit (don't wait for any more data)
+    dump_radio_status_to_serialport(radio.radioState());  // Should report IDLE
+    tMode = false;
+    printed =  false;
+  }
+}
+
+void dump_radio_status_to_serialport(uint8_t status)
+{
+  Serial.print("Enrf24 radio transceiver status: ");
+  switch (status) {
+    case ENRF24_STATE_NOTPRESENT:
+      Serial.println("NO TRANSCEIVER PRESENT");
+      break;
+
+    case ENRF24_STATE_DEEPSLEEP:
+      Serial.println("DEEP SLEEP <1uA power consumption");
+      break;
+
+    case ENRF24_STATE_IDLE:
+      Serial.println("IDLE module powered up w/ oscillators running");
+      break;
+
+    case ENRF24_STATE_PTX:
+      Serial.println("Actively Transmitting");
+      break;
+
+    case ENRF24_STATE_PRX:
+      Serial.println("Receive Mode");
+      break;
+
+    default:
+      Serial.println("UNKNOWN STATUS CODE");
+  }
+}
